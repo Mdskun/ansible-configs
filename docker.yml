@@ -1,67 +1,60 @@
 ---
-- name: Install and configure Docker on RHEL systems
-  hosts: docker_hosts
+- name: Install containerd on RHEL 10
+  hosts: all
   become: true
-  vars:
-    docker_packages:
-      - docker-ce
-      - docker-ce-cli
-      - containerd.io
-      - docker-buildx-plugin
-      - docker-compose-plugin
 
   tasks:
 
-    - name: Remove old Docker versions
-      yum:
+    - name: Install required tools
+      dnf:
         name:
-          - docker
-          - docker-client
-          - docker-client-latest
-          - docker-common
-          - docker-latest
-          - docker-latest-logrotate
-          - docker-logrotate
-          - docker-engine
-        state: absent
-
-    - name: Install required dependencies
-      yum:
-        name:
-          - yum-utils
-          - device-mapper-persistent-data
-          - lvm2
+          - dnf-plugins-core
         state: present
 
-    - name: Add Docker repository
-      get_url:
-        url: https://download.docker.com/linux/centos/docker-ce.repo
-        dest: /etc/yum.repos.d/docker-ce.repo
+    - name: Add Docker repo (for containerd)
+      command: >
+        dnf config-manager --add-repo
+        https://download.docker.com/linux/centos/docker-ce.repo
 
-    - name: Enable Docker CE repo
-      command: yum-config-manager --enable docker-ce-stable
+    - name: Enable Docker stable repo
+      command: dnf config-manager --enable docker-ce-stable
 
-    - name: Install Docker packages
-      yum:
-        name: "{{ docker_packages }}"
+    - name: Install containerd.io
+      dnf:
+        name: containerd.io
         state: present
 
-    - name: Start and enable Docker service
+    - name: Create containerd config dir
+      file:
+        path: /etc/containerd
+        state: directory
+
+    - name: Generate default config
+      command: containerd config default
+      register: containerd_config
+      changed_when: false
+
+    - name: Write config
+      copy:
+        dest: /etc/containerd/config.toml
+        content: "{{ containerd_config.stdout }}"
+
+    # 🔥 REQUIRED FIX (your system uses cgroup v2)
+    - name: Enable systemd cgroup
+      replace:
+        path: /etc/containerd/config.toml
+        regexp: 'SystemdCgroup = false'
+        replace: 'SystemdCgroup = true'
+
+    - name: Restart containerd
       systemd:
-        name: docker
-        state: started
+        name: containerd
+        state: restarted
         enabled: true
 
-    - name: Add user to docker group
-      user:
-        name: "{{ ansible_user }}"
-        groups: docker
-        append: yes
+    - name: Verify install
+      command: containerd --version
+      register: version
 
-    - name: Verify Docker installation
-      command: docker --version
-      register: docker_version
-
-    - name: Show Docker version
-      debug:
-        msg: "{{ docker_version.stdout }}"
+    - debug:
+        msg: "{{ version.stdout }}"
