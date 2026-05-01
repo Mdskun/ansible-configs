@@ -1,0 +1,52 @@
+---
+- name: Install Minikube and kubectl (containerd setup)
+  hosts: all
+  become: true
+
+  environment:
+    PATH: "/usr/local/bin:/usr/bin:/bin:/usr/sbin"
+
+  tasks:
+
+    # 🔧 Recommended for Kubernetes
+    - name: Disable swap
+      command: swapoff -a
+
+    - name: Install dependencies
+      dnf:
+        name:
+          - curl
+          - conntrack
+          - iptables
+          - socat
+        state: present
+
+    # 🔥 Fix for RHEL 9/10 (iptables nft issue)
+    - name: Fix iptables binary for Minikube
+      file:
+        src: /usr/sbin/iptables-nft
+        dest: /usr/sbin/iptables
+        state: link
+
+    - name: Install kubectl
+      get_url:
+        url: https://storage.googleapis.com/kubernetes-release/release/v1.30.0/bin/linux/amd64/kubectl
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+
+    - name: Install Minikube
+      get_url:
+        url: https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+        dest: /usr/local/bin/minikube
+        mode: '0755'
+
+    - name: Start Minikube with containerd
+      command: minikube start --driver=none
+
+    - name: Verify cluster
+      command: kubectl get nodes
+      register: output
+
+    - name: Show result
+      debug:
+        msg: "{{ output.stdout }}"
