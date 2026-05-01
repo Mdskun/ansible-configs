@@ -1,0 +1,101 @@
+- name: Setup Kubernetes Master
+  hosts: kslave
+  become: true
+
+  tasks:
+
+    # Disable swap
+    - name: Disable swap
+      command: swapoff -a
+
+    - name: Remove swap from fstab
+      replace:
+        path: /etc/fstab
+        regexp: '^(.*swap.*)$'
+        replace: '# \1'
+
+    # Kernel settings
+    - name: Add kernel modules config
+      copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          overlay
+          br_netfilter
+
+    # Load modules immediately
+    - name: Load overlay module
+      command: modprobe overlay
+
+    - name: Load br_netfilter module
+      command: modprobe br_netfilter
+
+    - name: Set sysctl params
+      copy:
+        dest: /etc/sysctl.d/kubernetes.conf
+        content: |
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.bridge.bridge-nf-call-iptables = 1
+          net.ipv4.ip_forward = 1
+
+    - name: Apply sysctl
+      command: sysctl --system
+
+    # Install Kubernetes tools
+    - name: Add Kubernetes repo
+      copy:
+        dest: /etc/yum.repos.d/kubernetes.repo
+        content: |
+          [kubernetes]
+          name=Kubernetes
+          baseurl=https://pkgs.k8s.io/core:/stable:/v1.29/rpm/
+          enabled=1
+          gpgcheck=1
+          gpgkey=https://pkgs.k8s.io/core:/stable:/v1.29/rpm/repodata/repomd.xml.key
+
+    - name: Install kubeadm, kubelet, kubectl
+      dnf:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+
+    - name: Enable kubelet
+      systemd:
+        name: kubelet
+        enabled: true
+        state: started
+
+    # Initialize cluster
+    - name: Initialize Kubernetes cluster
+      command: kubeadm init --pod-network-cidr=192.168.0.0/16
+      args:
+        creates: /etc/kubernetes/admin.conf
+      register: kubeadm_init
+
+    - name: Get join command
+      command: kubeadm token create --print-join-command
+      register: join_cmd
+
+    - name: Save join command
+      copy:
+        dest: /root/join-command.sh
+        content: "{{ join_cmd.stdout }} --ignore-preflight-errors=all"
+        mode: '0755'
+
+    - name: Setup kubeconfig
+      file:
+        path: /root/.kube
+        state: directory
+
+    - name: Copy admin.conf
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        remote_src: yes
+
+    # Install Calico network
+    - name: Install Calico CNI
+      command: kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf

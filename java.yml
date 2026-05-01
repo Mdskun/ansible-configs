@@ -1,0 +1,30 @@
+---
+- name: Install Oracle JDK 26
+  hosts: kslave
+  become: yes
+  vars:
+    java_rpm_url: "https://download.oracle.com/java/26/latest/jdk-26_linux-x64_bin.rpm"
+    java_rpm_path: "/tmp/jdk-26_linux-x64_bin.rpm"
+
+  tasks:
+
+    - name: Download Oracle JDK 26 RPM
+      get_url:
+        url: "{{ java_rpm_url }}"
+        dest: "{{ java_rpm_path }}"
+        mode: '0644'
+
+    - name: Install Oracle JDK 26
+      yum:
+        name: "{{ java_rpm_path }}"
+        disable_gpg_check: true
+        state: present
+
+    - name: Verify Java installation
+      command: java -version
+      register: java_version
+      ignore_errors: yes
+
+    - name: Show Java version
+      debug:
+        var: java_version.stdout_lines
