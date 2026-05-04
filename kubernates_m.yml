@@ -4,7 +4,9 @@
 
   tasks:
 
-    # Disable swap
+    # -------------------------
+    # SYSTEM PREP
+    # -------------------------
     - name: Disable swap
       command: swapoff -a
 
@@ -14,7 +16,7 @@
         regexp: '^(.*swap.*)$'
         replace: '# \1'
 
-    # Kernel settings
+    # Kernel modules
     - name: Add kernel modules config
       copy:
         dest: /etc/modules-load.d/k8s.conf
@@ -22,13 +24,13 @@
           overlay
           br_netfilter
 
-    # Load modules immediately
-    - name: Load overlay module
-      command: modprobe overlay
+    - name: Load modules
+      command: modprobe {{ item }}
+      loop:
+        - overlay
+        - br_netfilter
 
-    - name: Load br_netfilter module
-      command: modprobe br_netfilter
-
+    # Sysctl
     - name: Set sysctl params
       copy:
         dest: /etc/sysctl.d/kubernetes.conf
@@ -40,7 +42,18 @@
     - name: Apply sysctl
       command: sysctl --system
 
-    # Install Kubernetes tools
+    # -------------------------
+    # CONTAINERD (🔥 REQUIRED)
+    # -------------------------
+    - name: Start containerd
+      systemd:
+        name: containerd
+        state: started
+        enabled: true
+
+    # -------------------------
+    # KUBERNETES INSTALL
+    # -------------------------
     - name: Add Kubernetes repo
       copy:
         dest: /etc/yum.repos.d/kubernetes.repo
@@ -52,7 +65,7 @@
           gpgcheck=1
           gpgkey=https://pkgs.k8s.io/core:/stable:/v1.29/rpm/repodata/repomd.xml.key
 
-    - name: Install kubeadm, kubelet, kubectl
+    - name: Install kube tools
       dnf:
         name:
           - kubelet
@@ -66,36 +79,55 @@
         enabled: true
         state: started
 
-    # Initialize cluster
+    # -------------------------
+    # INIT CLUSTER
+    # -------------------------
     - name: Initialize Kubernetes cluster
       command: kubeadm init --pod-network-cidr=192.168.0.0/16
       args:
         creates: /etc/kubernetes/admin.conf
-      register: kubeadm_init
 
-    - name: Get join command
+    # -------------------------
+    # GET JOIN COMMAND
+    # -------------------------
+    - name: Generate join command
       command: kubeadm token create --print-join-command
       register: join_cmd
 
-    - name: Save join command
+    - name: Save join command locally (🔥 FIX)
       copy:
-        dest: /root/join-command.sh
-        content: "{{ join_cmd.stdout }} --ignore-preflight-errors=all"
-        mode: '0755'
+        content: "{{ join_cmd.stdout }}"
+        dest: "./join-command.sh"
+      delegate_to: localhost
 
+    # -------------------------
+    # KUBECONFIG
+    # -------------------------
     - name: Setup kubeconfig
-      file:
-        path: /root/.kube
-        state: directory
+      shell: |
+        mkdir -p /root/.kube
+        cp /etc/kubernetes/admin.conf /root/.kube/config
 
-    - name: Copy admin.conf
+    - name: Copy kubeconfig to ec2-user
       copy:
         src: /etc/kubernetes/admin.conf
-        dest: /root/.kube/config
+        dest: /home/ec2-user/.kube/config
         remote_src: yes
+        owner: ec2-user
+        group: ec2-user
+        mode: '0644'
 
-    # Install Calico network
-    - name: Install Calico CNI
+    - name: Ensure .kube directory exists
+      file:
+        path: /home/ec2-user/.kube
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+
+    # -------------------------
+    # NETWORK
+    # -------------------------
+    - name: Install Calico
       command: kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf

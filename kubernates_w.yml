@@ -3,11 +3,13 @@
   become: true
 
   vars:
-    join_command: "kubeadm join <MASTER_IP>:6443 --token <TOKEN> --discovery-token-ca-cert-hash sha256:<HASH>"
+    join_file: "./join-command.sh"
 
   tasks:
 
-    # Disable swap
+    # -------------------------
+    # SYSTEM PREP
+    # -------------------------
     - name: Disable swap
       command: swapoff -a
 
@@ -17,15 +19,21 @@
         regexp: '^(.*swap.*)$'
         replace: '# \1'
 
-    # Kernel settings
-    - name: Load kernel modules
-      modprobe:
-        name: "{{ item }}"
-        state: present
+    # Kernel modules
+    - name: Add kernel modules config
+      copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          overlay
+          br_netfilter
+
+    - name: Load modules
+      command: modprobe {{ item }}
       loop:
         - overlay
         - br_netfilter
 
+    # Sysctl
     - name: Set sysctl params
       copy:
         dest: /etc/sysctl.d/kubernetes.conf
@@ -37,7 +45,18 @@
     - name: Apply sysctl
       command: sysctl --system
 
-    # Install Kubernetes tools
+    # -------------------------
+    # CONTAINERD
+    # -------------------------
+    - name: Start containerd
+      systemd:
+        name: containerd
+        state: started
+        enabled: true
+
+    # -------------------------
+    # KUBERNETES INSTALL
+    # -------------------------
     - name: Add Kubernetes repo
       copy:
         dest: /etc/yum.repos.d/kubernetes.repo
@@ -49,7 +68,7 @@
           gpgcheck=1
           gpgkey=https://pkgs.k8s.io/core:/stable:/v1.29/rpm/repodata/repomd.xml.key
 
-    - name: Install kubeadm, kubelet
+    - name: Install kube tools
       dnf:
         name:
           - kubelet
@@ -59,8 +78,31 @@
     - name: Enable kubelet
       systemd:
         name: kubelet
+        state: started
         enabled: true
 
-    # Join cluster
-    - name: Join Kubernetes cluster
+    # -------------------------
+    # JOIN CLUSTER
+    # -------------------------
+    - name: Read join command
+      set_fact:
+        join_command: "{{ lookup('file', join_file) }}"
+
+    - name: Check if already joined
+      stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: joined
+
+    - name: Join cluster
       command: "{{ join_command }}"
+      when: not joined.stat.exists
+
+    # -------------------------
+    # CLEANUP (run once)
+    # -------------------------
+    - name: Delete join command locally
+      file:
+        path: "{{ join_file }}"
+        state: absent
+      delegate_to: localhost
+      run_once: true
