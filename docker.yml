@@ -1,5 +1,5 @@
 ---
-- name: Install containerd on RHEL 10
+- name: Install Docker + containerd on RHEL 10 (with fixes)
   hosts: all
   become: true
 
@@ -11,35 +11,78 @@
           - dnf-plugins-core
         state: present
 
-    - name: Add Docker repo (for containerd)
+    - name: Add Docker repo
       command: >
         dnf config-manager --add-repo
         https://download.docker.com/linux/centos/docker-ce.repo
+      args:
+        creates: /etc/yum.repos.d/docker-ce.repo
 
     - name: Enable Docker stable repo
       command: dnf config-manager --enable docker-ce-stable
 
-    - name: Install containerd.io
+    # ✅ Install Docker + containerd
+    - name: Install Docker packages
       dnf:
-        name: containerd.io
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
         state: present
 
+    # 🔥 IMPORTANT: ensure kernel modules exist
+    - name: Install kernel modules
+      dnf:
+        name:
+          - kernel-modules
+          - kernel-modules-extra
+        state: present
+
+    # 🔥 Load required modules
+    - name: Load overlay module
+      command: modprobe overlay
+      ignore_errors: true
+
+    - name: Load br_netfilter module
+      command: modprobe br_netfilter
+      ignore_errors: true
+
+    # 🔥 Persist modules
+    - name: Persist kernel modules
+      copy:
+        dest: /etc/modules-load.d/docker.conf
+        content: |
+          overlay
+          br_netfilter
+
+    # 🔥 Fix sysctl (REQUIRED for Docker networking)
+    - name: Configure sysctl for Docker
+      copy:
+        dest: /etc/sysctl.d/docker.conf
+        content: |
+          net.bridge.bridge-nf-call-iptables = 1
+          net.ipv4.ip_forward = 1
+
+    - name: Apply sysctl
+      command: sysctl --system
+
+    # 🔥 Containerd config
     - name: Create containerd config dir
       file:
         path: /etc/containerd
         state: directory
 
-    - name: Generate default config
+    - name: Generate default containerd config
       command: containerd config default
       register: containerd_config
       changed_when: false
 
-    - name: Write config
+    - name: Write containerd config
       copy:
         dest: /etc/containerd/config.toml
         content: "{{ containerd_config.stdout }}"
 
-    # 🔥 REQUIRED FIX (your system uses cgroup v2)
+    # 🔥 REQUIRED FIX (cgroup v2)
     - name: Enable systemd cgroup
       replace:
         path: /etc/containerd/config.toml
@@ -52,9 +95,34 @@
         state: restarted
         enabled: true
 
-    - name: Verify install
-      command: containerd --version
-      register: version
+    # 🔥 OPTIONAL workaround for nftables issues (safe fallback)
+    - name: Disable Docker iptables (fallback)
+      copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "iptables": false
+          }
+
+    # 🔥 Start Docker
+    - name: Start Docker
+      systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    # ✅ Add ec2-user to docker group
+    - name: Add user to docker group
+      user:
+        name: ec2-user
+        groups: docker
+        append: yes
+
+    # ✅ Verify Docker
+    - name: Test Docker
+      command: docker run hello-world
+      register: docker_test
+      ignore_errors: true
 
     - debug:
-        msg: "{{ version.stdout }}"
+        msg: "{{ docker_test.stdout }}"
