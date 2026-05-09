@@ -1,9 +1,29 @@
 ---
-- name: Install Docker + containerd on RHEL 10 (with fixes)
+- name: Install Docker + containerd on RHEL (8/9/10 with fixes)
   hosts: all
   become: true
 
+  vars:
+    docker_user: ec2-user   # 🔥 CHANGE THIS or pass via --extra-vars
+
   tasks:
+
+    # ✅ (Docker docs) Remove old versions
+    - name: Remove old Docker versions
+      dnf:
+        name:
+          - docker
+          - docker-client
+          - docker-client-latest
+          - docker-common
+          - docker-latest
+          - docker-latest-logrotate
+          - docker-logrotate
+          - docker-engine
+          - podman
+          - runc
+        state: absent
+      ignore_errors: true
 
     - name: Install required tools
       dnf:
@@ -28,9 +48,11 @@
           - docker-ce
           - docker-ce-cli
           - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
         state: present
 
-    # 🔥 IMPORTANT: ensure kernel modules exist
+    # 🔥 Kernel modules
     - name: Install kernel modules
       dnf:
         name:
@@ -38,7 +60,6 @@
           - kernel-modules-extra
         state: present
 
-    # 🔥 Load required modules
     - name: Load overlay module
       command: modprobe overlay
       ignore_errors: true
@@ -47,7 +68,6 @@
       command: modprobe br_netfilter
       ignore_errors: true
 
-    # 🔥 Persist modules
     - name: Persist kernel modules
       copy:
         dest: /etc/modules-load.d/docker.conf
@@ -55,7 +75,7 @@
           overlay
           br_netfilter
 
-    # 🔥 Fix sysctl (REQUIRED for Docker networking)
+    # 🔥 Sysctl
     - name: Configure sysctl for Docker
       copy:
         dest: /etc/sysctl.d/docker.conf
@@ -82,7 +102,6 @@
         dest: /etc/containerd/config.toml
         content: "{{ containerd_config.stdout }}"
 
-    # 🔥 REQUIRED FIX (cgroup v2)
     - name: Enable systemd cgroup
       replace:
         path: /etc/containerd/config.toml
@@ -95,14 +114,15 @@
         state: restarted
         enabled: true
 
-    # 🔥 OPTIONAL workaround for nftables issues (safe fallback)
-    - name: Disable Docker iptables (fallback)
+    # 🔥 RHEL 10 workaround
+    - name: Disable Docker iptables (only for RHEL 10)
       copy:
         dest: /etc/docker/daemon.json
         content: |
           {
             "iptables": false
           }
+      when: ansible_distribution_major_version | int >= 10
 
     # 🔥 Start Docker
     - name: Start Docker
@@ -111,12 +131,13 @@
         state: started
         enabled: true
 
-    # ✅ Add ec2-user to docker group
+    # ✅ Add variable user to docker group
     - name: Add user to docker group
       user:
-        name: ec2-user
+        name: "{{ docker_user }}"
         groups: docker
         append: yes
+      when: docker_user is defined
 
     # ✅ Verify Docker
     - name: Test Docker
