@@ -1,13 +1,10 @@
 ---
-- name: Install and configure Git
+- name: "Install and configure Git"
   hosts: all
-  become: yes
-
+  become: true
   vars_files:
-    - vars/credentials.yml
-
+    - credentials.yml
   tasks:
-
     - name: Install Git (Debian/Ubuntu)
       apt:
         name: git
@@ -19,11 +16,13 @@
       yum:
         name: git
         state: present
+        update_cache: yes
       when: ansible_os_family == "RedHat"
+
     - name: Set Git username
       command: git config --global user.name "{{ git_username }}"
-      become: no
+      become: true
 
     - name: Set Git email
       command: git config --global user.email "{{ git_email }}"
-      become: no
+      become: true

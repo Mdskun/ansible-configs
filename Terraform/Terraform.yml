@@ -1,0 +1,19 @@
+---
+- import_playbook: ../Git/git.yml
+- name: "Terraform installation"
+  hosts: all
+  become: true
+  tasks:
+    - name: "add repo"
+      ansible.builtin.yum_repository:
+        name: Hashicorp
+        description: Terraform repo
+        baseurl:
+          - https://rpm.releases.hashicorp.com/RHEL/$releasever/$basearch/stable
+        enabled: true
+        gpgcheck: false
+
+    - name: "install Terraform"
+      yum:
+        name: terraform
+        state: present
