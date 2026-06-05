@@ -1,0 +1,53 @@
+---
+# - import_playbook: ../Packages/java.yml
+- name: "Jenkins instalation"
+  hosts: all
+  become: true
+  tasks:
+    - name: "Get repo"
+      get_url:
+        url: "https://pkg.jenkins.io/rpm-stable/jenkins.repo"
+        dest: /etc/yum.repos.d/jenkins.repo
+
+    - name: "Installation"
+      yum:
+        name:
+          - fontconfig
+          - java-21-openjdk
+          - jenkins
+        state: present
+        update_cache: yes
+        disable_gpg_check: false
+
+    - name: Install firewalld
+      yum:
+        name: firewalld
+        state: present
+    - name: Start and enable firewalld
+      systemd:
+        name: firewalld
+        state: started
+        enabled: true
+    - name: "firewalld open port"
+      firewalld:
+        port: 8080/tcp
+        permanent: true
+        state: enabled
+        immediate: true
+
+    - name: Reload systemd
+      command: systemctl daemon-reload
+    - name: Service restart
+      systemd:
+        name: jenkins
+        state: started
+        enabled: true
+
+    - name: password print
+      command: cat /var/lib/jenkins/secrets/initialAdminPassword
+      register: pass
+
+    - name: priont password
+      debug:
+        msg: "The defalt passwod is: {{pass.stdout}}"
+
