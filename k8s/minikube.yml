@@ -1,0 +1,52 @@
+- name: Install Minikube (Docker driver)
+  hosts: all
+  become: true
+
+  tasks:
+
+    # Disable swap
+    - name: Disable swap
+      command: swapoff -a
+
+    - name: Disable swap permanently
+      replace:
+        path: /etc/fstab
+        regexp: '^.*swap.*$'
+        replace: '# \g<0>'
+
+    # Dependencies
+    - name: Install dependencies
+      dnf:
+        name:
+          - curl
+          - conntrack
+          - iptables
+          - socat
+        state: present
+
+    # Install kubectl
+    - name: Install kubectl
+      get_url:
+        url: https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+
+    # Install Minikube
+    - name: Install Minikube
+      get_url:
+        url: https://storage.googleapis.com/minikube/releases/v1.33.1/minikube-linux-amd64
+        dest: /usr/local/bin/minikube
+        mode: '0755'
+
+    # Start Minikube
+    - name: Start Minikube with Docker
+      command: minikube start --driver=docker --force
+      args:
+        creates: /root/.kube/config
+
+    - name: Verify cluster
+      command: kubectl get nodes
+      register: output
+
+    - debug:
+        msg: "{{ output.stdout }}"
