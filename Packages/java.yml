@@ -1,7 +1,7 @@
 ---
 - name: Install Oracle JDK 26
   hosts: j-slave
-  become: yes
+  become: true
   vars:
     java_rpm_url: "https://download.oracle.com/java/26/latest/jdk-26_linux-x64_bin.rpm"
     java_rpm_path: "/tmp/jdk-26_linux-x64_bin.rpm"
@@ -23,7 +23,7 @@
     - name: Verify Java installation
       command: java -version
       register: java_version
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: Show Java version
       debug:

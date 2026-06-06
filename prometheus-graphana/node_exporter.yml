@@ -1,0 +1,59 @@
+---
+- name: Mannual node exporter installation
+  hosts: all
+  become: true
+  vars:
+    url: https://github.com/prometheus/node_exporter/releases/download/v1.10.2/node_exporter-1.10.2.linux-amd64.tar.gz
+  tasks:
+    - name: get node exporter from git
+      get_url:
+        url: "{{url}}"
+        dest: /tmp/node_exporter.tar.gz
+        mode: '0644'
+    - name: unzip the node_exporter
+      unarchive:
+        src: /tmp/node_exporter.tar.gz
+        dest: /tmp
+        remote_src: yes
+
+    - name: Install firewalld
+      yum:
+        name: firewalld
+        state: present
+    - name: Start and enable firewalld
+      systemd:
+        name: firewalld
+        state: started
+        enabled: true
+    - name: Open port 9100
+      firewalld:
+        port: 9100/tcp
+        permanent: true
+        state: enabled
+        immediate: yes
+
+    - name: Find node_exporter binary
+      find:
+        paths: /tmp
+        patterns: node_exporter
+        recurse: yes
+      register: node_exporter_file
+
+    - name: Copy node exporter binary
+      copy:
+        src: "{{ node_exporter_file.files[0].path }}"
+        dest: /usr/local/bin/node_exporter
+        mode: '0755'
+        remote_src: yes
+
+    - name: Copy service file
+      copy:
+        src: node_exporter.service
+        dest: /etc/systemd/system/node_exporter.service
+    - name: Reload systemd
+      command: systemctl daemon-reexec
+    - name: Start node_exp
+      systemd:
+        name: node_exporter
+        state: started
+        enabled: true
